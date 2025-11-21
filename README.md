@@ -14,3 +14,7 @@
 #Are pedestrian and cyclist injuries increasing or decreasing over time, and how do their trends compare to other types of people involved in crashes?
 
 #How do a person's age and gender influence the severity of the injuries they experience in a crash?
+
+#How do different weather or lighting conditions (like daylight vs nighttime) relate to the number or severity of crashes in NYC?
+
+#Do certain age groups (teen drivers, adults, seniors) appear more frequently in crashes, and does their crash involvement differ in terms of injury severity?
