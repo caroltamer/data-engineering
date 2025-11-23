@@ -11,11 +11,11 @@ df = load_data()
 
 # 2) Create Dash App
 app = Dash(
-    __name__,    # FIXED
+    __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP]
 )
 
-# Needed for deployment platforms like Render
+# Needed for deployment (Render, Heroku, etc.)
 server = app.server
 
 # 3) Set the layout
@@ -24,6 +24,6 @@ app.layout = create_layout(df)
 # 4) Register all callbacks
 callbacks.register_callbacks(app, df)
 
-# 5) Run the server
-if __name__ == "__main__":   # FIXED
-    app.run_server(debug=True)
+# 5) Run the server locally
+if __name__ == "__main__":
+    app.run(debug=True)

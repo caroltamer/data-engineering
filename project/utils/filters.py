@@ -1,110 +1,188 @@
+from pathlib import Path
 import pandas as pd
-import re
+from typing import Union
 
-from utils.load_data import (
-    COL_BOROUGH,
-    COL_YEAR,
-    COL_PERSON_INJURY,
-    COL_PERSON_TYPE,
-    COL_VEHICLE_TYPE,
-    COL_FACTOR,
+# ===========================
+# Column constants used across the project
+# ===========================
+COL_BOROUGH = "BOROUGH"
+COL_YEAR = "CRASH_YEAR"
+COL_MONTH = "CRASH_MONTH"
+COL_HOUR = "CRASH_HOUR"
+COL_LAT = "LATITUDE"
+COL_LON = "LONGITUDE"
+COL_COLLISION_ID = "COLLISION_ID"
+COL_PERSON_INJURY = "PERSON_INJURY"
+COL_PERSON_TYPE = "PERSON_TYPE"
+COL_VEHICLE_TYPE = "VEHICLE_TYPE_CODE_1"
+COL_FACTOR = "CONTRIBUTING_FACTOR_VEHICLE_1"
+
+# ===========================
+# Path to your final CSV
+# ===========================
+DEFAULT_DATA_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "integrated_cleaned_final.csv"
 )
 
-# List of borough names for basic matching
-KNOWN_BOROUGHS = ["BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND"]
+# ===========================
+# Optional column renames (if your CSV has spaces or different naming)
+# ===========================
+RENAMES = {
+    "BOROUGH ": COL_BOROUGH,
+    "CRASH YEAR": COL_YEAR,
+    "CRASH MONTH": COL_MONTH,
+    "CRASH HOUR": COL_HOUR,
+    "LATITUDE ": COL_LAT,
+    "LONGITUDE ": COL_LON,
+    "VEHICLE TYPE CODE 1": COL_VEHICLE_TYPE,
+    "CONTRIBUTING FACTOR VEHICLE 1": COL_FACTOR,
+    "PERSON TYPE": COL_PERSON_TYPE,
+    "PERSON INJURY": COL_PERSON_INJURY,
+    "COLLISION_ID": COL_COLLISION_ID,
+}
 
-
-def parse_search_query(query: str,
-                       person_type_options: list,
-                       injury_options: list) -> dict:
+def load_data(path: Union[Path, str] = DEFAULT_DATA_PATH) -> pd.DataFrame:
     """
-    Interpret a free-text search query and extract:
-      - borough
-      - year
-      - person_type
-      - injury
-    Example: 'Brooklyn 2022 pedestrian killed'
+    Load the cleaned CSV dataset for the dashboard.
+    Performs light normalization on column names & types.
+    """
+    path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found at: {path}")
+
+    # Load CSV
+    df = pd.read_csv(path)
+
+    # Rename any mismatched columns
+    rename_map = {old: new for old, new in RENAMES.items() if old in df.columns}
+    if rename_map:
+        df.rename(columns=rename_map, inplace=True)
+
+    # Ensure numeric columns are numeric
+    for col in [COL_YEAR, COL_MONTH, COL_HOUR]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Clean string columns
+    for col in [
+        COL_BOROUGH,
+        COL_PERSON_INJURY,
+        COL_PERSON_TYPE,
+        COL_VEHICLE_TYPE,
+        COL_FACTOR,
+    ]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+
+    return df
+# ===========================
+# Search query parsing
+# ===========================
+def parse_search_query(query: str) -> dict:
+    """
+    Parse a free-text search query into structured filters.
+    Example:
+        'manhattan 2021 speed' ->
+        {
+            "borough": "MANHATTAN",
+            "year": 2021,
+            "keywords": ["speed"]
+        }
     """
     if not query:
         return {}
 
-    text = query.upper()
-    result: dict = {}
+    parts = query.strip().split()
+    result = {
+        "borough": None,
+        "year": None,
+        "keywords": [],
+    }
 
-    # ---- Borough detection ----
-    for b in KNOWN_BOROUGHS:
-        if b in text:
-            result["borough"] = b.title()
-            break
-
-    # ---- Year detection (2010–2039) ----
-    years = re.findall(r"(20[1-3][0-9])", text)
-    if years:
-        try:
-            result["year"] = int(years[0])
-        except ValueError:
-            pass
-
-    # ---- Person type detection using the provided options ----
-    if "PEDESTRIAN" in text:
-        for p in person_type_options:
-            if "ped" in p.lower():
-                result["person_type"] = p
-                break
-    elif "CYCLIST" in text or "BICYCLE" in text:
-        for p in person_type_options:
-            if "cycl" in p.lower() or "bicy" in p.lower():
-                result["person_type"] = p
-                break
-    elif "DRIVER" in text or "MOTORIST" in text:
-        for p in person_type_options:
-            if "driver" in p.lower() or "motor" in p.lower():
-                result["person_type"] = p
-                break
-
-    # ---- Injury detection using the provided options ----
-    if "KILL" in text or "FATAL" in text:
-        for i in injury_options:
-            if "kill" in i.lower() or "fatal" in i.lower():
-                result["injury"] = i
-                break
-    elif "INJUR" in text:
-        for i in injury_options:
-            if "injur" in i.lower():
-                result["injury"] = i
-                break
+    for p in parts:
+        up = p.upper()
+        # Try to detect borough
+        if up in ["MANHATTAN", "BROOKLYN", "QUEENS", "BRONX", "STATEN", "STATEN ISLAND"]:
+            result["borough"] = "STATEN ISLAND" if up.startswith("STATEN") else up
+        # Try to detect a year like 2019, 2020, 2021...
+        elif p.isdigit() and len(p) == 4:
+            try:
+                result["year"] = int(p)
+            except ValueError:
+                pass
+        else:
+            result["keywords"].append(p)
 
     return result
 
 
-def apply_filters(df: pd.DataFrame,
-                  borough=None,
-                  year=None,
-                  vehicle_type=None,
-                  factor=None,
-                  injury=None,
-                  person_type=None) -> pd.DataFrame:
+# ===========================
+# Main filtering helper
+# ===========================
+from typing import List, Optional
+
+
+def apply_filters(
+    df: pd.DataFrame,
+    boroughs: Optional[List[str]] = None,
+    years: Optional[List[int]] = None,
+    months: Optional[List[int]] = None,
+    hours: Optional[List[int]] = None,
+    injuries: Optional[List[str]] = None,
+    person_types: Optional[List[str]] = None,
+    vehicle_types: Optional[List[str]] = None,
+    factors: Optional[List[str]] = None,
+    search_text: Optional[str] = None,
+) -> pd.DataFrame:
     """
-    Apply all selected filters to the dataframe and return the result.
+    Generic filtering helper used by callbacks.
+
+    All arguments are optional; if a filter is None or empty, it is ignored.
     """
     filtered = df.copy()
 
-    if borough:
-        filtered = filtered[filtered[COL_BOROUGH] == borough]
+    # Borough filter
+    if boroughs and COL_BOROUGH in filtered.columns:
+        boroughs_up = [b.upper() for b in boroughs]
+        filtered = filtered[filtered[COL_BOROUGH].str.upper().isin(boroughs_up)]
 
-    if year:
-        filtered = filtered[filtered[COL_YEAR] == year]
+    # Year filter
+    if years and COL_YEAR in filtered.columns:
+        filtered = filtered[filtered[COL_YEAR].isin(years)]
 
-    if vehicle_type:
-        filtered = filtered[filtered[COL_VEHICLE_TYPE] == vehicle_type]
+    # Month filter
+    if months and COL_MONTH in filtered.columns:
+        filtered = filtered[filtered[COL_MONTH].isin(months)]
 
-    if factor:
-        filtered = filtered[filtered[COL_FACTOR] == factor]
+    # Hour filter
+    if hours and COL_HOUR in filtered.columns:
+        filtered = filtered[filtered[COL_HOUR].isin(hours)]
 
-    if injury:
-        filtered = filtered[filtered[COL_PERSON_INJURY] == injury]
+    # Injury filter
+    if injuries and COL_PERSON_INJURY in filtered.columns:
+        filtered = filtered[filtered[COL_PERSON_INJURY].isin(injuries)]
 
-    if person_type:
-        filtered = filtered[filtered[COL_PERSON_TYPE] == person_type]
+    # Person type filter
+    if person_types and COL_PERSON_TYPE in filtered.columns:
+        filtered = filtered[filtered[COL_PERSON_TYPE].isin(person_types)]
+
+    # Vehicle type filter
+    if vehicle_types and COL_VEHICLE_TYPE in filtered.columns:
+        filtered = filtered[filtered[COL_VEHICLE_TYPE].isin(vehicle_types)]
+
+    # Factor filter
+    if factors and COL_FACTOR in filtered.columns:
+        filtered = filtered[filtered[COL_FACTOR].isin(factors)]
+
+    # Free-text search in factor / vehicle / borough
+    if search_text:
+        text = search_text.strip().lower()
+        if text:
+            mask = pd.Series(True, index=filtered.index)
+            for col in [COL_FACTOR, COL_VEHICLE_TYPE, COL_BOROUGH]:
+                if col in filtered.columns:
+                    mask &= filtered[col].astype(str).str.lower().str.contains(text, na=False)
+            filtered = filtered[mask]
 
     return filtered
